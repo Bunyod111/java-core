@@ -1,96 +1,85 @@
-//Functional Interface
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
+// Publisher/Subscriber
+
+import java.util.Scanner;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public class Main {
-    public static void main(String[] args) {
-          class SimpleThreadPool {
-            private final int numThreads;
-            private final List<Thread> workerThreads;
-            private final LinkedList<Runnable> taskQueue;
-            private volatile boolean isShutdown;
-            private class Worker implements Runnable {
-                @Override
-                public void run() {
-                    while (true) {
-                        Runnable task = null;
-                        synchronized (taskQueue) {
-                            while (taskQueue.isEmpty() && !isShutdown) {
-                                try {
-                                    taskQueue.wait();
-                                } catch (InterruptedException e) {
-                                    return;
-                                }
-                            }
-                            if (isShutdown && taskQueue.isEmpty()) {
-                                break;
-                            }
-                            if (!taskQueue.isEmpty()) {
-                                task = taskQueue.removeFirst();
-                            }
-                        }
-                        if (task != null) {
-                            try {
-                                task.run();
-                            } catch (RuntimeException e) {
-                                     }
-                        }
-                    }
-                }
-            }
-            public SimpleThreadPool(int numThreads) {
-                this.numThreads = numThreads;
-                this.taskQueue = new LinkedList<>();
-                this.workerThreads = new ArrayList<>(numThreads);
-                this.isShutdown = false;
+    /*
+     * Подписчик. Будет работать в отдельном потоке.
+     */
+    static class Subscriber implements Runnable {
 
-                for (int i = 0; i < numThreads; i++) {
-                    Thread worker = new Thread(new Worker());
-                    worker.setName("localpool-worker-" + i);
-                    worker.start();
-                    workerThreads.add(worker);
-                }
-            }
-            public void submit(Runnable task) {
-                if (isShutdown) {
-                    return;
-                }
-                synchronized (taskQueue) {
-                    taskQueue.addLast(task);
-                    taskQueue.notifyAll();
-                }
-            }
-            public void shutdown() {
-                isShutdown = true;
-                synchronized (taskQueue) {
-                    taskQueue.notifyAll();
-                }
-                for (Thread thread : workerThreads) {
-                    try {
-                        thread.join();
-                    } catch (InterruptedException e) {
-                        // Игнорируем
-                    }
-                }
-            }
+        private LinkedBlockingQueue<String> sharedQueue;
+
+        public Subscriber(LinkedBlockingQueue<String> queue) {
+            this.sharedQueue = queue;
         }
-        System.out.println("создаем пул с 3 потоками ");
-        SimpleThreadPool pool = new SimpleThreadPool(3);
 
-        System.out.println("добавляем 10 задач ");
-        for (int i = 0; i < 10; i++) {
-            int taskNumber = i;
-            pool.submit(() -> {
+        @Override
+        public void run() {
+            boolean isRunning = true;
+            System.out.println("подписчик: Запущен и ждет сообщений...");
+
+            while (isRunning) {
                 try {
-                    System.out.println("задача " + taskNumber + " начинается. поток: " + Thread.currentThread().getName() +"\n");
-                    Thread.sleep(500);
-                    System.out.print("Задача " + taskNumber + " финиш\n");
-                } catch (InterruptedException e) {}
-            });
+                    // .take() блокирует поток, пока не появится элемент
+                    String message = sharedQueue.take();
+
+                    if (message.equals("exit")) {
+                        isRunning = false; // Завершаем цикл
+                        System.out.println("подписчик говорит, что получил 'exit' и останавливается");
+                    } else {
+                        System.out.println("подписчик получил: " + message);
+                    }
+
+                } catch (InterruptedException e) {
+                    System.out.println("подписчик: поток был прерван!");
+                    isRunning = false;
+                }
+            }
+
+            System.out.println("подписчик: Поток завершен.");
         }
-        System.out.print("задачи добавлены. вызываем shutdown()\n");
-        pool.shutdown();
-        System.out.println("программа завершена");
+    }
+
+    /*
+     * Издатель (главный поток).
+     */
+    public static void main(String[] args) {
+        // 1. Создаем общую очередь
+        LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<String>();
+        // 2. Создаем и запускаем поток подписчика
+        Subscriber subscriber = new Subscriber(queue);
+        Thread subscriberThread = new Thread(subscriber);
+        subscriberThread.start();
+
+        // 3. Главный поток (Издатель) читает ввод из консоли
+        System.out.println("напишите слово (или 'exit' для завершения):");
+        Scanner scanner = new Scanner(System.in);
+        String userInput;
+        try {
+            while (true) {
+                userInput = scanner.nextLine();
+
+                // .put() кладет элемент в очередь
+                queue.put(userInput);
+
+                // Если ввели "exit", выходим из цикла издателя
+                if (userInput.equals("exit")) {
+                    System.out.println("exit написали, значит пока");
+                    break;
+                }
+            }
+        } catch (InterruptedException e) {
+            System.out.println("главный поток был закончен");
+        }
+        try {
+            subscriberThread.join();
+        } catch (InterruptedException e) {
+            System.out.println("ошибка при ожидании завершения подписчика");
+        }
+
+        scanner.close();
+        System.out.println("успешно всё завершилось");
     }
 }
